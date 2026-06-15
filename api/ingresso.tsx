@@ -37,6 +37,7 @@ export default async function handler(req: Request): Promise<Response> {
         const responsavel = String(body?.responsavel ?? '');
         const data        = String(body?.data        ?? '');
         const qrcode      = String(body?.qrcode      ?? '');
+        const codigo      = String(body?.codigo      ?? 'ingresso');
 
         if (!qrcode) {
             return new Response(JSON.stringify({ error: 'Campo "qrcode" é obrigatório.' }), {
@@ -181,6 +182,7 @@ export default async function handler(req: Request): Promise<Response> {
                 headers: {
                     'Cache-Control': 'no-store',
                     'Access-Control-Allow-Origin': '*',
+                    'Content-Disposition': `inline; filename="${codigo}.png"`,
                 },
             },
         );
