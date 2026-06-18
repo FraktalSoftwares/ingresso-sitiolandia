@@ -109,6 +109,20 @@ async function renderAllInBatches(ingressos: any[], fonts: any[], batchSize = 3)
 }
 
 // =============================================================================
+// Uint8Array → base64 (em chunks pra não estourar stack em PDFs grandes)
+// =============================================================================
+function uint8ToBase64(bytes: Uint8Array): string {
+    let binary = '';
+    const chunkSize = 0x8000; // 32KB por chunk
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+        const chunk = bytes.subarray(i, i + chunkSize);
+        // String.fromCharCode com chunk pequeno é seguro
+        binary += String.fromCharCode.apply(null, Array.from(chunk));
+    }
+    return btoa(binary);
+}
+
+// =============================================================================
 // Handler
 // =============================================================================
 export default async function handler(req: Request): Promise<Response> {
@@ -202,15 +216,29 @@ export default async function handler(req: Request): Promise<Response> {
 
         const pdfBytes = await pdfDoc.save();
 
-        return new Response(pdfBytes, {
-            status: 200,
-            headers: {
-                'Content-Type': 'application/pdf',
-                'Content-Disposition': `inline; filename="${codigo}.pdf"`,
-                'Cache-Control': 'no-store',
-                'Access-Control-Allow-Origin': '*',
+        // =============================================================
+        // Devolve base64 dentro de JSON (stateless, nada persiste)
+        // =============================================================
+        const pdf_base64 = uint8ToBase64(pdfBytes);
+
+        return new Response(
+            JSON.stringify({
+                pdf_base64,
+                filename: `${codigo}.pdf`,
+                mime: 'application/pdf',
+                codigo,
+                total_ingressos: ingressos.length,
+                size_bytes: pdfBytes.byteLength,
+            }),
+            {
+                status: 200,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Cache-Control': 'no-store',
+                    'Access-Control-Allow-Origin': '*',
+                },
             },
-        });
+        );
     } catch (err: any) {
         return new Response(
             JSON.stringify({ error: err?.message || 'Erro desconhecido ao gerar PDF' }),
