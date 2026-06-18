@@ -21,11 +21,13 @@ function IngressoTemplate({
     responsavel,
     data,
     qrcode,
+    codigo,
 }: {
     tipo: string;
     responsavel: string;
     data: string;
     qrcode: string;
+    codigo: string;
 }) {
     return (
         <div
@@ -69,12 +71,13 @@ function IngressoTemplate({
                 </div>
             </div>
 
-            {/* QR */}
-            <div style={{ display: 'flex', justifyContent: 'center', marginTop: 'auto', paddingBottom: 25 }}>
+            {/* QR + Código */}
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginTop: 'auto', paddingBottom: 18, gap: 6 }}>
                 <div style={{ display: 'flex', padding: 10, backgroundColor: '#EBF6E8', borderRadius: 6 }}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img src={qrcode} width={150} height={150} alt="" />
                 </div>
+                <span style={{ fontSize: 11, color: '#45464E', fontWeight: 400 }}>{codigo}</span>
             </div>
         </div>
     );
@@ -90,6 +93,7 @@ async function renderIngressoToPNG(ing: any, fonts: any[]): Promise<Uint8Array> 
             responsavel={String(ing?.responsavel ?? '')}
             data={String(ing?.data ?? '')}
             qrcode={String(ing?.qrcode ?? '')}
+            codigo={String(ing?.codigo ?? '')}
         />,
         { width: 280, height: 470, fonts },
     );
