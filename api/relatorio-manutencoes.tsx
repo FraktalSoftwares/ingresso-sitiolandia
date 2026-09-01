@@ -1,4 +1,4 @@
-import { gerarRelatorioPDF } from '../gerarRelatorio';
+import { gerarRelatorioPDF, PayloadInvalidoError } from '../gerarRelatorio';
 import type { RelatorioPayload } from '../gerarRelatorio';
 
 export const config = {
@@ -46,15 +46,18 @@ export default async function handler(req: Request): Promise<Response> {
         const periodo_inicio = String(body?.periodo_inicio ?? '');
         const periodo_fim = String(body?.periodo_fim ?? '');
         const dias = body?.dias;
+        const excursoes = body?.excursoes;
 
-        if (!periodo_inicio || !periodo_fim || !Array.isArray(dias)) {
+        if (!periodo_inicio || !periodo_fim || !Array.isArray(dias) || !Array.isArray(excursoes)) {
             return new Response(
-                JSON.stringify({ error: 'Payload inválido. Esperado: { periodo_inicio, periodo_fim, dias: [] }' }),
+                JSON.stringify({
+                    error: 'Payload inválido. Esperado: { periodo_inicio, periodo_fim, dias: [], excursoes: [] }',
+                }),
                 { status: 400, headers: { 'Content-Type': 'application/json' } },
             );
         }
 
-        const payload: RelatorioPayload = { periodo_inicio, periodo_fim, dias };
+        const payload: RelatorioPayload = { periodo_inicio, periodo_fim, dias, excursoes };
         const pdfBytes = await gerarRelatorioPDF(payload);
         const pdf_base64 = uint8ToBase64(pdfBytes);
         const filename = `relatorio-manutencoes-${periodo_inicio.replace(/\//g, '-')}-a-${periodo_fim.replace(/\//g, '-')}.pdf`;
@@ -79,9 +82,11 @@ export default async function handler(req: Request): Promise<Response> {
             },
         );
     } catch (err: any) {
+        // erro de payload (ex: excursão referenciando data fora da lista "dias") → 400, não 500
+        const status = err instanceof PayloadInvalidoError ? 400 : 500;
         return new Response(
             JSON.stringify({ error: err?.message || 'Erro desconhecido ao gerar PDF' }),
-            { status: 500, headers: { 'Content-Type': 'application/json' } },
+            { status, headers: { 'Content-Type': 'application/json' } },
         );
     }
 }

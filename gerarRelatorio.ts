@@ -20,10 +20,59 @@ export interface DiaPayload {
   excursoes: Excursao[];
 }
 
+// ---------- Payload real enviado pelo Bubble: duas listas soltas, unidas por data ----------
+export interface DiaCapacidade {
+  dia: string;
+  capacidade_sitiolandia: number;
+  capacidade_educantaro: number;
+}
+
+export interface ExcursaoComData extends Excursao {
+  data: string; // chave de junção — precisa bater com algum "dia" em DiaCapacidade
+}
+
 export interface RelatorioPayload {
   periodo_inicio: string;
   periodo_fim: string;
-  dias: DiaPayload[];
+  dias: DiaCapacidade[];
+  excursoes: ExcursaoComData[];
+}
+
+export class PayloadInvalidoError extends Error {}
+
+// agrupa a lista solta de excursões dentro de cada dia (pelo campo "data"),
+// pra reaproveitar o mesmo loop de renderização por dia já validado.
+// Só devolve dias que TÊM excursão — dias vazios não geram card (regra já documentada).
+function agruparExcursoesPorDia(dias: DiaCapacidade[], excursoes: ExcursaoComData[]): DiaPayload[] {
+  const porDia = new Map<string, DiaPayload>();
+  for (const d of dias) {
+    porDia.set(d.dia, {
+      dia: d.dia,
+      capacidade_sitiolandia: d.capacidade_sitiolandia,
+      capacidade_educantaro: d.capacidade_educantaro,
+      excursoes: [],
+    });
+  }
+
+  const diasFaltando = new Set<string>();
+  for (const ex of excursoes) {
+    const alvo = porDia.get(ex.data);
+    if (!alvo) {
+      diasFaltando.add(ex.data);
+      continue;
+    }
+    const { data, ...excursaoSemData } = ex;
+    alvo.excursoes.push(excursaoSemData);
+  }
+
+  if (diasFaltando.size > 0) {
+    throw new PayloadInvalidoError(
+      `Excursões referenciam data(s) que não estão na lista "dias": ${[...diasFaltando].join(', ')}. ` +
+      `Cada valor usado em "excursoes[].data" precisa ter uma entrada correspondente em "dias[].dia".`
+    );
+  }
+
+  return [...porDia.values()].filter((d) => d.excursoes.length > 0);
 }
 
 // ---------- Tipos internos ----------
@@ -122,7 +171,9 @@ function truncarPorLargura(texto: string, font: PDFFont, size: number, maxWidth:
   return low <= 0 ? '…' : texto.slice(0, low) + '…';
 }
 
-export async function gerarRelatorioPDF({ periodo_inicio, periodo_fim, dias }: RelatorioPayload): Promise<Uint8Array> {
+export async function gerarRelatorioPDF({ periodo_inicio, periodo_fim, dias: diasCapacidade, excursoes: excursoesFlat }: RelatorioPayload): Promise<Uint8Array> {
+  const dias = agruparExcursoesPorDia(diasCapacidade, excursoesFlat);
+
   const pdfDoc = await PDFDocument.create();
   const fontRegular = await pdfDoc.embedFont(StandardFonts.Helvetica);
   const fontBold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
@@ -332,8 +383,11 @@ export async function gerarRelatorioPDF({ periodo_inicio, periodo_fim, dias }: R
   }
 
   // ---------- Página de resumo ----------
+  // parquesAtivos e os totais usam as listas ORIGINAIS (diasCapacidade/excursoesFlat), não o "dias"
+  // agrupado/filtrado acima — porque o resumo deve cobrir a capacidade do período INTEIRO
+  // (mesmo dias sem nenhuma excursão), enquanto os cards só existem para dias com movimento.
   const parquesAtivos = (['Sitiolândia', 'Educântaro'] as const).filter((parque) =>
-    dias.some((d) => d.excursoes.some((e) => e.parque === parque))
+    excursoesFlat.some((e) => e.parque === parque)
   ).length;
   const alturaResumoEstimada = 24 + parquesAtivos * ALTURA_BLOCO_BARRA + 10 + 16 + 14;
 
@@ -347,16 +401,16 @@ export async function gerarRelatorioPDF({ periodo_inicio, periodo_fim, dias }: R
     Sitiolândia: { ocupado: 0, capacidade: 0, segmentos: new Map() },
     Educântaro: { ocupado: 0, capacidade: 0, segmentos: new Map() },
   };
+  for (const d of diasCapacidade) {
+    totaisPorParque.Sitiolândia.capacidade += d.capacidade_sitiolandia || 0;
+    totaisPorParque.Educântaro.capacidade += d.capacidade_educantaro || 0;
+  }
   const totalPorContratante: Record<string, number> = {};
-  for (const dia of dias) {
-    totaisPorParque.Sitiolândia.capacidade += dia.capacidade_sitiolandia || 0;
-    totaisPorParque.Educântaro.capacidade += dia.capacidade_educantaro || 0;
-    for (const ex of dia.excursoes) {
-      const alvo = totaisPorParque[ex.parque];
-      alvo.ocupado += ex.qtd;
-      alvo.segmentos.set(ex.segmento_grafico, (alvo.segmentos.get(ex.segmento_grafico) || 0) + ex.qtd);
-      totalPorContratante[ex.tipo] = (totalPorContratante[ex.tipo] || 0) + 1;
-    }
+  for (const ex of excursoesFlat) {
+    const alvo = totaisPorParque[ex.parque];
+    alvo.ocupado += ex.qtd;
+    alvo.segmentos.set(ex.segmento_grafico, (alvo.segmentos.get(ex.segmento_grafico) || 0) + ex.qtd);
+    totalPorContratante[ex.tipo] = (totalPorContratante[ex.tipo] || 0) + 1;
   }
 
   const colsResumo = calcularColunas(margem, larguraUtil);

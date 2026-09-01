@@ -67,34 +67,38 @@ Gera o PDF completo do relatório (todos os dias do período + página de totali
   "periodo_inicio": "13/08/2026",
   "periodo_fim": "30/08/2026",
   "dias": [
+    { "dia": "13/08/2026", "capacidade_sitiolandia": 1200, "capacidade_educantaro": 200 },
+    { "dia": "25/08/2026", "capacidade_sitiolandia": 1200, "capacidade_educantaro": 200 }
+  ],
+  "excursoes": [
     {
-      "dia": "13/08/2026",
-      "capacidade_sitiolandia": 1200,
-      "capacidade_educantaro": 200,
-      "excursoes": [
-        {
-          "tipo": "Escola Particular",
-          "nome": "COLEGIO MADRE MAZZARELO",
-          "agente": "VIA LEÕES",
-          "parque": "Sitiolândia",
-          "servico_contratado": "Sitiolândia Integral",
-          "segmento_grafico": "Sitiolândia Integral",
-          "qtd": 75,
-          "cadastro": "11/02/2026",
-          "manutencao": "Manutenção Pendente"
-        }
-      ]
+      "data": "13/08/2026",
+      "tipo": "Escola Particular",
+      "nome": "COLEGIO MADRE MAZZARELO",
+      "agente": "VIA LEÕES",
+      "parque": "Sitiolândia",
+      "servico_contratado": "Sitiolândia Integral",
+      "segmento_grafico": "Sitiolândia Integral",
+      "qtd": 75,
+      "cadastro": "11/02/2026",
+      "manutencao": "Manutenção Pendente"
     }
   ]
 }
 ```
 
+**Duas listas soltas, unidas pela data — repare que a chave tem nomes diferentes em cada lista:**
+
+- `dias[].dia` — a data do dia.
+- `excursoes[].data` — a mesma data, só que o campo se chama `data` aqui (não `dia`). É assim que o Bubble consegue mandar; o endpoint faz a junção internamente.
+
 **Regras do payload:**
 
-- `periodo_inicio`/`periodo_fim`: range completo do filtro selecionado pelo usuário, mesmo que os últimos dias não tenham excursão — é o que vai no título, não é derivado do array `dias`.
-- `dias`: só os dias que **têm** pelo menos uma excursão (dias vazios não geram card).
+- `periodo_inicio`/`periodo_fim`: range completo do filtro selecionado pelo usuário — é o que vai no título, independente do que está em `dias`/`excursoes`.
+- `dias[]`: pode incluir **todos** os dias do período, mesmo os sem nenhuma excursão — eles não geram card, mas **entram na soma de capacidade do Totalizadores final**.
+- `excursoes[].data` **precisa** corresponder a algum `dias[].dia` enviado — se não corresponder, o endpoint devolve **400** nomeando a data problemática, não descarta a excursão silenciosamente.
 - `capacidade_sitiolandia`/`capacidade_educantaro`: capacidade **total** do dia (o ocupado é calculado somando `qtd`).
-- `parque`: `"Sitiolândia"` ou `"Educântaro"` — decide a barra e a cor do bullet na tabela (verde/azul).
+- `parque`: `"Sitiolândia"` ou `"Educântaro"` — decide a barra e a cor do bullet na tabela (verde/azul). Campo obrigatório e **separado** de `servico_contratado` — não derive um do outro.
 - `servico_contratado`: texto exato da coluna "Serviço Contratado" da tabela.
 - `segmento_grafico`: texto exato do chip colorido embaixo da barra (pode ser igual a `servico_contratado`, como na Sitiolândia, ou diferente, como no Educântaro — "Fund I", "Educação Infantil"). O endpoint agrupa e soma `qtd` por valor distinto dentro de cada parque/dia; cada valor vira um chip com cor própria, consistente em todo o documento.
 
@@ -131,6 +135,10 @@ Roda em **Edge Runtime** (`export const config = { runtime: 'edge' }`), igual ao
 | Body type | JSON |
 | Body | payload conforme schema acima (monte a lista `dias` dinamicamente no workflow) |
 | **Return type** | **JSON** — decodifique `pdf_base64` do mesmo jeito que já faz com o `ingressos-pdf` |
+
+### Erros de payload
+
+Se alguma `excursoes[].data` não corresponder a nenhum `dias[].dia` enviado, o endpoint responde **400** com a mensagem nomeando a(s) data(s) problemática(s) — não descarta a excursão silenciosamente. Trate isso no workflow do Bubble como validação de payload, não como erro genérico de servidor.
 
 ### Limitações conhecidas (testado só com payload de amostra, não com volume real de produção)
 
