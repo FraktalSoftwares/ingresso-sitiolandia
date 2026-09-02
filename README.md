@@ -140,11 +140,12 @@ Roda em **Edge Runtime** (`export const config = { runtime: 'edge' }`), igual ao
 
 Se alguma `excursoes[].data` não corresponder a nenhum `dias[].dia` enviado, o endpoint responde **400** com a mensagem nomeando a(s) data(s) problemática(s) — não descarta a excursão silenciosamente. Trate isso no workflow do Bubble como validação de payload, não como erro genérico de servidor.
 
-### Limitações conhecidas (testado só com payload de amostra, não com volume real de produção)
+### Limitações conhecidas (testado com payload de amostra e com 1 mês real de dados — 30 dias, 73 excursões)
 
-- Cada card de dia é tratado como bloco atômico (não quebra no meio entre páginas, pra não cortar o fundo arredondado). Isso pode deixar espaço em branco no fim de uma página se um dia grande não couber no que resta dela.
+- Um card de dia que não cabe inteiro na página **continua na próxima**, em vez de pular a página inteira: o fragmento de continuação mostra `"DD/MM/AAAA (continuação)"` no lugar do cabeçalho de data completo, e os cantos arredondados só aparecem nas bordas reais do card (topo do primeiro fragmento, base do último) — a borda cortada entre páginas fica reta.
 - Truncamento de texto usa largura real medida na fonte (não conta caracteres), mas a pill de "Data do Cadastro / Status da Manutenção" não tem teto de largura — se algum status vier como texto livre muito longo, a pill pode estourar a borda do card.
-- Cantos do card usam a técnica de retângulo+círculos do pdf-lib (não há suporte nativo a `border-radius`); visualmente equivalente ao HTML original, mas vale reconferir se o raio bate exatamente com o esperado em telas de alta resolução.
+- Cantos do card usam a técnica de retângulo+círculos do pdf-lib (não há suporte nativo a `border-radius`); visualmente equivalente ao HTML original.
+- Se `segmento_grafico` vier como string vazia (`""`), o chip da barra aparece sem texto, só com a quantidade entre parênteses — é um problema de qualidade de dado na origem, não do endpoint; vale validar isso no Bubble antes de enviar.
 
 ---
 
