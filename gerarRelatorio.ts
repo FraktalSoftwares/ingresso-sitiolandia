@@ -399,8 +399,14 @@ export async function gerarRelatorioPDF({ periodo_inicio, periodo_fim, dias: dia
     while (idx < unidades.length) {
       const alturaTitulo = primeiroFragmento ? GAP_DATA_PARA_CARD + 8 : 16;
 
-      // se nem o título + a primeira unidade pendente cabem no que resta da página, pula pra próxima ANTES de desenhar algo
-      if (y - margem - alturaTitulo - PAD_CARD < unidades[idx].altura) {
+      // no primeiro fragmento de um dia, exige cabeçalho + pelo menos 1 excursão —
+      // nunca deixa um card começar só com o cabeçalho da tabela e nenhuma linha (fica parecendo quebrado).
+      // Em fragmentos de continuação, 1 unidade já basta.
+      const minimoNecessario = primeiroFragmento && unidades.length > 1
+        ? unidades[idx].altura + unidades[idx + 1].altura
+        : unidades[idx].altura;
+
+      if (y - margem - alturaTitulo - PAD_CARD < minimoNecessario) {
         novaPagina();
       }
 
