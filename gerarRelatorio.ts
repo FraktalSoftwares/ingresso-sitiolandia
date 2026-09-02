@@ -106,6 +106,14 @@ interface TextoOpcoes {
   color?: Cor;
 }
 
+// unidade mínima de conteúdo dentro de um card de dia — usada pra decidir onde
+// o card pode ser cortado entre páginas sem quebrar uma linha ou barra ao meio
+type Unidade =
+  | { tipo: 'header'; altura: number }
+  | { tipo: 'excursao'; altura: number; ex: Excursao }
+  | { tipo: 'gapPreBarras'; altura: number }
+  | { tipo: 'barra'; altura: number; parque: Excursao['parque']; ocupado: number; capacidade: number; segmentos: Segmento[] };
+
 // ---------- Paleta ----------
 const COR_TITULO = rgb(0.10, 0.16, 0.29);
 const COR_CINZA_TEXTO = rgb(0.42, 0.45, 0.49);
@@ -216,19 +224,28 @@ export async function gerarRelatorioPDF({ periodo_inicio, periodo_fim, dias: dia
     page.drawText(texto, { x, y: yPos, size, font, color });
   }
 
-  // retângulo com cantos arredondados: cruz (2 retângulos) + 4 círculos nos cantos
-  function desenharRetanguloArredondado(x: number, yBase: number, largura: number, altura: number, raio: number, cor: Cor): void {
-    page.drawRectangle({ x: x + raio, y: yBase, width: largura - 2 * raio, height: altura, color: cor });
-    page.drawRectangle({ x, y: yBase + raio, width: largura, height: altura - 2 * raio, color: cor });
-    const cantos: [number, number][] = [
-      [x + raio, yBase + raio],
-      [x + largura - raio, yBase + raio],
-      [x + raio, yBase + altura - raio],
-      [x + largura - raio, yBase + altura - raio],
-    ];
-    for (const [cx, cy] of cantos) {
-      page.drawCircle({ x: cx, y: cy, size: raio, color: cor });
+  // retângulo com cantos arredondados SELETIVOS — arredondarTopo/arredondarBase controlam
+  // quais bordas ganham o raio; as outras ficam retas (usado quando um card de dia
+  // continua na página seguinte: só a borda que é o início/fim REAL do card é arredondada).
+  function desenharCardFundo(x: number, yBase: number, largura: number, altura: number, raio: number, cor: Cor, arredondarTopo: boolean, arredondarBase: boolean): void {
+    const insetTopo = arredondarTopo ? raio : 0;
+    const insetBase = arredondarBase ? raio : 0;
+    page.drawRectangle({ x, y: yBase + insetBase, width: largura, height: altura - insetBase - insetTopo, color: cor });
+    if (arredondarTopo) {
+      page.drawRectangle({ x: x + raio, y: yBase + altura - raio, width: largura - 2 * raio, height: raio, color: cor });
+      page.drawCircle({ x: x + raio, y: yBase + altura - raio, size: raio, color: cor });
+      page.drawCircle({ x: x + largura - raio, y: yBase + altura - raio, size: raio, color: cor });
     }
+    if (arredondarBase) {
+      page.drawRectangle({ x: x + raio, y: yBase, width: largura - 2 * raio, height: raio, color: cor });
+      page.drawCircle({ x: x + raio, y: yBase + raio, size: raio, color: cor });
+      page.drawCircle({ x: x + largura - raio, y: yBase + raio, size: raio, color: cor });
+    }
+  }
+
+  // retângulo com todos os 4 cantos arredondados (usado pra pill branca, que nunca corta entre páginas)
+  function desenharPill(x: number, yBase: number, largura: number, altura: number, raio: number, cor: Cor): void {
+    desenharCardFundo(x, yBase, largura, altura, raio, cor, true, true);
   }
 
   desenharTexto('Manutenções de Agendamentos', margem, y, { size: 18, font: fontBold, color: COR_TITULO });
@@ -253,20 +270,9 @@ export async function gerarRelatorioPDF({ periodo_inicio, periodo_fim, dias: dia
     return parque === 'Educântaro' ? COR_BULLET_EDUCANTARO : COR_BULLET_SITIOLANDIA;
   }
 
-  // altura de um bloco de barra (label+numeros+bar+chips)
   const ALTURA_BLOCO_BARRA = 12 + 18 + 10;
-  const ALTURA_HEADER_TABELA = 10 + 14; // texto + espaço até início das linhas
-
-  function alturaCard(dia: DiaPayload): number {
-    const parques = [...new Set(dia.excursoes.map((e) => e.parque))];
-    let altura = PAD_CARD; // topo
-    altura += ALTURA_HEADER_TABELA;
-    altura += dia.excursoes.length * (DECREMENTO_PARA_PILL + ALTURA_PILL) + Math.max(dia.excursoes.length - 1, 0) * DECREMENTO_APOS_PILL;
-    altura += GAP_APOS_EXCURSOES;
-    altura += parques.length * ALTURA_BLOCO_BARRA;
-    altura += PAD_CARD; // base
-    return altura;
-  }
+  const ALTURA_HEADER_TABELA = 10 + 14;
+  const ALTURA_EXCURSAO = DECREMENTO_PARA_PILL + ALTURA_PILL + DECREMENTO_APOS_PILL;
 
   function espacoDisponivel(): number {
     return y - margem;
@@ -298,6 +304,7 @@ export async function gerarRelatorioPDF({ periodo_inicio, periodo_fim, dias: dia
 
     let chipX = barraX;
     for (const seg of segmentos) {
+      if (!seg.nome) continue; // segmento sem nome (segmento_grafico vazio) entra na barra, mas não vira chip
       const texto = `${seg.nome} ( ${seg.qtd} )`;
       const largura = fontRegular.widthOfTextAtSize(texto, 7.5) + 12;
       page.drawRectangle({ x: chipX, y: y - 2, width: largura, height: 13, color: seg.cor });
@@ -307,7 +314,24 @@ export async function gerarRelatorioPDF({ periodo_inicio, periodo_fim, dias: dia
     y -= 10;
   }
 
-  function desenharBlocoBarras(cols: Colunas, parques: Excursao['parque'][], dia: DiaPayload): void {
+  function desenharCabecalhoTabela(cols: Colunas): void {
+    desenharTexto('Tipo', cols.tipo, y, { size: 8, color: COR_CINZA_TEXTO });
+    desenharTexto('Nome', cols.nome, y, { size: 8, color: COR_CINZA_TEXTO });
+    desenharTexto('Ag. / Rep. / Atendente', cols.agente, y, { size: 8, color: COR_CINZA_TEXTO });
+    desenharTexto('Serviço Contratado', cols.servico, y, { size: 8, color: COR_CINZA_TEXTO });
+    desenharTexto('QTD', cols.qtd, y, { size: 8, color: COR_CINZA_TEXTO });
+    y -= 24;
+  }
+
+  // ---------- Monta a lista de "unidades" indivisíveis de um dia (cabeçalho, cada excursão, cada barra) ----------
+  function construirUnidades(dia: DiaPayload): Unidade[] {
+    const parques = [...new Set(dia.excursoes.map((e) => e.parque))];
+    const unidades: Unidade[] = [{ tipo: 'header', altura: ALTURA_HEADER_TABELA }];
+    dia.excursoes.forEach((ex, idx) => {
+      const ultima = idx === dia.excursoes.length - 1;
+      unidades.push({ tipo: 'excursao', altura: DECREMENTO_PARA_PILL + ALTURA_PILL + (ultima ? 0 : DECREMENTO_APOS_PILL), ex });
+    });
+    unidades.push({ tipo: 'gapPreBarras', altura: GAP_APOS_EXCURSOES });
     for (const parque of parques) {
       const doParque = dia.excursoes.filter((e) => e.parque === parque);
       const porSegmento = new Map<string, number>();
@@ -317,69 +341,121 @@ export async function gerarRelatorioPDF({ periodo_inicio, periodo_fim, dias: dia
       const segmentos: Segmento[] = [...porSegmento.entries()].map(([nome, qtd]) => ({ nome, qtd, cor: mapaCores.get(nome)! }));
       const ocupado = segmentos.reduce((acc, s) => acc + s.qtd, 0);
       const capacidade = parque === 'Educântaro' ? dia.capacidade_educantaro : dia.capacidade_sitiolandia;
-      desenharBarra(cols, parque, ocupado, capacidade, segmentos);
+      unidades.push({ tipo: 'barra', altura: ALTURA_BLOCO_BARRA, parque, ocupado, capacidade, segmentos });
+    }
+    return unidades;
+  }
+
+  function desenharUnidade(cols: Colunas, unidade: Unidade): void {
+    switch (unidade.tipo) {
+      case 'header':
+        desenharCabecalhoTabela(cols);
+        break;
+      case 'excursao': {
+        const yAntes = y;
+        desenharLinhaExcursaoSemGapExtra(cols, unidade.ex);
+        const consumidoReal = yAntes - y;
+        y -= unidade.altura - consumidoReal; // desconta o gap restante (embutido na altura, mas não no desenho em si)
+        break;
+      }
+      case 'gapPreBarras':
+        y -= unidade.altura;
+        break;
+      case 'barra':
+        desenharBarra(cols, unidade.parque, unidade.ocupado, unidade.capacidade, unidade.segmentos);
+        break;
     }
   }
 
-  // ---------- Loop dos dias ----------
-  for (const dia of dias) {
-    const altura = alturaCard(dia);
+  // variante de desenharLinhaExcursao que não decide sozinha se é a última — o gap posterior
+  // já foi contabilizado (ou não) na altura da unidade, então aqui só desenhamos e nunca subtraímos de novo.
+  function desenharLinhaExcursaoSemGapExtra(cols: Colunas, ex: Excursao): void {
+    const larguraTipo = cols.nome - cols.tipo - 8;
+    const larguraNome = cols.agente - cols.nome - 8;
+    const larguraAgente = cols.servico - cols.agente - 16;
+    const larguraServico = cols.qtd - cols.servico - 8;
 
-    // bloco de dia é atômico: se não cabe no espaço restante, vai pra próxima página inteiro
-    if (altura + 26 > espacoDisponivel()) {
-      novaPagina();
+    page.drawCircle({ x: cols.servico - 8, y: y + 3, size: 3, color: corBullet(ex.parque) });
+    desenharTexto(truncarPorLargura(ex.tipo, fontRegular, 9, larguraTipo), cols.tipo, y, { size: 9 });
+    desenharTexto(truncarPorLargura(ex.nome, fontRegular, 9, larguraNome), cols.nome, y, { size: 9 });
+    desenharTexto(truncarPorLargura(ex.agente, fontRegular, 9, larguraAgente), cols.agente, y, { size: 9 });
+    desenharTexto(truncarPorLargura(ex.servico_contratado, fontRegular, 9, larguraServico), cols.servico, y, { size: 9 });
+    desenharTexto(String(ex.qtd), cols.qtd, y, { size: 9 });
+    y -= DECREMENTO_PARA_PILL;
+    const textoStatus = `Data do Cadastro: ${ex.cadastro}  |  Status da Manutenção: ${ex.manutencao}`;
+    const larguraTexto = fontRegular.widthOfTextAtSize(textoStatus, SIZE_STATUS);
+    const larguraPill = larguraTexto + PAD_PILL * 2;
+    desenharPill(cols.tipo - PAD_PILL, y - ALTURA_PILL, larguraPill, ALTURA_PILL, 8, COR_BRANCO);
+    desenharTexto(textoStatus, cols.tipo, y - (ALTURA_PILL - PAD_PILL - DESCENT_STATUS), { size: SIZE_STATUS, color: COR_CINZA_TEXTO });
+    y -= ALTURA_PILL;
+  }
+
+  // ---------- Loop dos dias — cada dia pode se dividir em vários "fragmentos" entre páginas ----------
+  for (const dia of dias) {
+    const unidades = construirUnidades(dia);
+    let idx = 0;
+    let primeiroFragmento = true;
+
+    while (idx < unidades.length) {
+      const alturaTitulo = primeiroFragmento ? GAP_DATA_PARA_CARD + 8 : 16;
+
+      // se nem o título + a primeira unidade pendente cabem no que resta da página, pula pra próxima ANTES de desenhar algo
+      if (y - margem - alturaTitulo - PAD_CARD < unidades[idx].altura) {
+        novaPagina();
+      }
+
+      if (primeiroFragmento) {
+        desenharTexto(dia.dia, margem, y, { size: 12, font: fontBold, color: COR_TITULO });
+        desenharTexto(nomeDiaSemana(dia.dia), margem + 75, y, { size: 8, color: COR_CINZA_TEXTO });
+        y -= GAP_DATA_PARA_CARD + 8;
+      } else {
+        desenharTexto(`${dia.dia} (continuação)`, margem, y, { size: 9, color: COR_CINZA_TEXTO });
+        y -= 16;
+      }
+
+      const topoFragmento = y;
+      const espacoParaConteudo = y - margem - PAD_CARD;
+
+      const alturaTotalRestante = unidades.slice(idx).reduce((acc, u) => acc + u.altura, 0);
+      const ehUltimoFragmento = alturaTotalRestante + PAD_CARD <= espacoParaConteudo;
+
+      let fim: number;
+      let alturaUsada: number;
+      if (ehUltimoFragmento) {
+        fim = unidades.length;
+        alturaUsada = alturaTotalRestante;
+      } else {
+        let acumulado = 0;
+        let j = idx;
+        while (j < unidades.length && acumulado + unidades[j].altura <= espacoParaConteudo) {
+          acumulado += unidades[j].altura;
+          j++;
+        }
+        fim = Math.max(j, idx + 1); // garante progresso mínimo de 1 unidade por fragmento
+        alturaUsada = acumulado;
+      }
+
+      const alturaFragmentoCard = PAD_CARD + alturaUsada + (ehUltimoFragmento ? PAD_CARD : 0);
+      desenharCardFundo(margem, topoFragmento - alturaFragmentoCard, larguraUtil, alturaFragmentoCard, RAIO_CARD, COR_CARD_BG, primeiroFragmento, ehUltimoFragmento);
+
+      y -= PAD_CARD;
+      const cardX0 = margem + PAD_CARD;
+      const larguraInterna = larguraUtil - PAD_CARD * 2;
+      const cols = calcularColunas(cardX0, larguraInterna);
+
+      for (let k = idx; k < fim; k++) {
+        desenharUnidade(cols, unidades[k]);
+      }
+      if (ehUltimoFragmento) y -= PAD_CARD;
+
+      idx = fim;
+      primeiroFragmento = false;
+      if (idx < unidades.length) {
+        novaPagina();
+      }
     }
 
-    desenharTexto(dia.dia, margem, y, { size: 12, font: fontBold, color: COR_TITULO });
-    desenharTexto(nomeDiaSemana(dia.dia), margem + 75, y, { size: 8, color: COR_CINZA_TEXTO });
-    y -= GAP_DATA_PARA_CARD + 8;
-
-    const topoCard = y;
-    desenharRetanguloArredondado(margem, topoCard - altura, larguraUtil, altura, RAIO_CARD, COR_CARD_BG);
-
-    y -= PAD_CARD;
-    const cardX0 = margem + PAD_CARD;
-    const larguraInterna = larguraUtil - PAD_CARD * 2;
-    const cols = calcularColunas(cardX0, larguraInterna);
-
-    // cabeçalho da tabela
-    desenharTexto('Tipo', cols.tipo, y, { size: 8, color: COR_CINZA_TEXTO });
-    desenharTexto('Nome', cols.nome, y, { size: 8, color: COR_CINZA_TEXTO });
-    desenharTexto('Ag. / Rep. / Atendente', cols.agente, y, { size: 8, color: COR_CINZA_TEXTO });
-    desenharTexto('Serviço Contratado', cols.servico, y, { size: 8, color: COR_CINZA_TEXTO });
-    desenharTexto('QTD', cols.qtd, y, { size: 8, color: COR_CINZA_TEXTO });
-    y -= 24;
-
-    dia.excursoes.forEach((ex, idx) => {
-      const larguraTipo = cols.nome - cols.tipo - 8;
-      const larguraNome = cols.agente - cols.nome - 8;
-      const larguraAgente = cols.servico - cols.agente - 16;
-      const larguraServico = cols.qtd - cols.servico - 8;
-
-      page.drawCircle({ x: cols.servico - 8, y: y + 3, size: 3, color: corBullet(ex.parque) });
-      desenharTexto(truncarPorLargura(ex.tipo, fontRegular, 9, larguraTipo), cols.tipo, y, { size: 9 });
-      desenharTexto(truncarPorLargura(ex.nome, fontRegular, 9, larguraNome), cols.nome, y, { size: 9 });
-      desenharTexto(truncarPorLargura(ex.agente, fontRegular, 9, larguraAgente), cols.agente, y, { size: 9 });
-      desenharTexto(truncarPorLargura(ex.servico_contratado, fontRegular, 9, larguraServico), cols.servico, y, { size: 9 });
-      desenharTexto(String(ex.qtd), cols.qtd, y, { size: 9 });
-      y -= DECREMENTO_PARA_PILL;
-      {
-        const textoStatus = `Data do Cadastro: ${ex.cadastro}  |  Status da Manutenção: ${ex.manutencao}`;
-        const larguraTexto = fontRegular.widthOfTextAtSize(textoStatus, SIZE_STATUS);
-        const larguraPill = larguraTexto + PAD_PILL * 2;
-        desenharRetanguloArredondado(cols.tipo - PAD_PILL, y - ALTURA_PILL, larguraPill, ALTURA_PILL, 8, COR_BRANCO);
-        desenharTexto(textoStatus, cols.tipo, y - (ALTURA_PILL - PAD_PILL - DESCENT_STATUS), { size: SIZE_STATUS, color: COR_CINZA_TEXTO });
-      }
-      y -= ALTURA_PILL;
-      if (idx < dia.excursoes.length - 1) y -= DECREMENTO_APOS_PILL;
-    });
-
-    y -= GAP_APOS_EXCURSOES;
-
-    const parques = [...new Set(dia.excursoes.map((e) => e.parque))];
-    desenharBlocoBarras(cols, parques, dia);
-
-    y = topoCard - altura - GAP_ENTRE_DIAS;
+    y -= GAP_ENTRE_DIAS;
   }
 
   // ---------- Página de resumo ----------
