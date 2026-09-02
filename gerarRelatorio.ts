@@ -140,6 +140,7 @@ const RAIO_CARD = 8;
 const GAP_APOS_EXCURSOES = 20;
 const GAP_DATA_PARA_CARD = 10;
 const GAP_ENTRE_DIAS = 20;
+const GAP_ENTRE_BARRAS = 20; // separação entre os gráficos de Sitiolândia e Educântaro, quando os dois aparecem no mesmo card/resumo
 
 function parseDataBR(str: string): Date {
   const [d, m, y] = str.split('/').map(Number);
@@ -332,7 +333,7 @@ export async function gerarRelatorioPDF({ periodo_inicio, periodo_fim, dias: dia
       unidades.push({ tipo: 'excursao', altura: DECREMENTO_PARA_PILL + ALTURA_PILL + (ultima ? 0 : DECREMENTO_APOS_PILL), ex });
     });
     unidades.push({ tipo: 'gapPreBarras', altura: GAP_APOS_EXCURSOES });
-    for (const parque of parques) {
+    parques.forEach((parque, idxParque) => {
       const doParque = dia.excursoes.filter((e) => e.parque === parque);
       const porSegmento = new Map<string, number>();
       for (const ex of doParque) {
@@ -341,8 +342,9 @@ export async function gerarRelatorioPDF({ periodo_inicio, periodo_fim, dias: dia
       const segmentos: Segmento[] = [...porSegmento.entries()].map(([nome, qtd]) => ({ nome, qtd, cor: mapaCores.get(nome)! }));
       const ocupado = segmentos.reduce((acc, s) => acc + s.qtd, 0);
       const capacidade = parque === 'Educântaro' ? dia.capacidade_educantaro : dia.capacidade_sitiolandia;
-      unidades.push({ tipo: 'barra', altura: ALTURA_BLOCO_BARRA, parque, ocupado, capacidade, segmentos });
-    }
+      const ultimaBarra = idxParque === parques.length - 1;
+      unidades.push({ tipo: 'barra', altura: ALTURA_BLOCO_BARRA + (ultimaBarra ? 0 : GAP_ENTRE_BARRAS), parque, ocupado, capacidade, segmentos });
+    });
     return unidades;
   }
 
@@ -361,9 +363,13 @@ export async function gerarRelatorioPDF({ periodo_inicio, periodo_fim, dias: dia
       case 'gapPreBarras':
         y -= unidade.altura;
         break;
-      case 'barra':
+      case 'barra': {
+        const yAntes = y;
         desenharBarra(cols, unidade.parque, unidade.ocupado, unidade.capacidade, unidade.segmentos);
+        const consumidoReal = yAntes - y;
+        y -= unidade.altura - consumidoReal; // desconta o gap extra entre parques, se houver (embutido na altura)
         break;
+      }
     }
   }
 
@@ -471,7 +477,7 @@ export async function gerarRelatorioPDF({ periodo_inicio, periodo_fim, dias: dia
   const parquesAtivos = (['Sitiolândia', 'Educântaro'] as const).filter((parque) =>
     excursoesFlat.some((e) => e.parque === parque)
   ).length;
-  const alturaResumoEstimada = 24 + parquesAtivos * ALTURA_BLOCO_BARRA + 10 + 16 + 14;
+  const alturaResumoEstimada = 24 + parquesAtivos * ALTURA_BLOCO_BARRA + Math.max(parquesAtivos - 1, 0) * GAP_ENTRE_BARRAS + 10 + 16 + 14;
 
   if (alturaResumoEstimada + 26 > espacoDisponivel()) {
     novaPagina();
@@ -496,11 +502,12 @@ export async function gerarRelatorioPDF({ periodo_inicio, periodo_fim, dias: dia
   }
 
   const colsResumo = calcularColunas(margem, larguraUtil);
-  for (const [parque, dados] of Object.entries(totaisPorParque) as [string, TotalParque][]) {
-    if (dados.capacidade === 0) continue;
+  const parquesParaDesenhar = (Object.entries(totaisPorParque) as [string, TotalParque][]).filter(([, dados]) => dados.capacidade > 0);
+  parquesParaDesenhar.forEach(([parque, dados], idx) => {
     const segmentos: Segmento[] = [...dados.segmentos.entries()].map(([nome, qtd]) => ({ nome, qtd, cor: mapaCores.get(nome)! }));
     desenharBarra(colsResumo, parque, dados.ocupado, dados.capacidade, segmentos);
-  }
+    if (idx < parquesParaDesenhar.length - 1) y -= GAP_ENTRE_BARRAS;
+  });
 
   y -= 10;
   desenharTexto('Total por Contratante:', margem, y, { size: 10, font: fontBold, color: COR_TITULO });
